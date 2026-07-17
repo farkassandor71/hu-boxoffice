@@ -13,6 +13,13 @@ struct ContentView: View {
         return sort.apply(to: filtered)
     }
 
+    /// "Filmek · 2026. július" — shows which monthly edition is loaded right next
+    /// to the screen title, so it's visible without scrolling to the bottom bar.
+    private var navigationTitle: String {
+        guard let snap = store.latestSnapshot else { return "Filmek" }
+        return "Filmek · \(Format.monthYear(snap))"
+    }
+
     var body: some View {
         NavigationStack {
             List(results) { film in
@@ -26,7 +33,7 @@ struct ContentView: View {
                 }
             }
             .listStyle(.plain)
-            .navigationTitle("Filmek")
+            .navigationTitle(navigationTitle)
             .searchable(text: $query, prompt: "Cím keresése")
             .autocorrectionDisabled()
             .textInputAutocapitalization(.never)
@@ -51,14 +58,12 @@ struct ContentView: View {
                             : "line.3.horizontal.decrease.circle")
                     }
                 }
-                if let snap = store.latestSnapshot {
-                    ToolbarItem(placement: .bottomBar) {
-                        Text("\(Format.monthYear(snap)) · \(store.films.count) film")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.7)
-                    }
+                ToolbarItem(placement: .bottomBar) {
+                    Text("\(Format.number(store.films.count)) film")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
                 }
             }
             .sheet(isPresented: $showingFilters) {

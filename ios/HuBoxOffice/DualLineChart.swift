@@ -5,7 +5,12 @@ import SwiftUI
 /// readable, with month/year labels under the data points.
 struct DualLineChart: View {
     let points: [HistoryPoint]
-    var admissionsColor: Color = .accentColor
+    // Deliberately not tied to the app's accent color: admissions and gross track
+    // each other so closely (roughly constant ticket price) that their normalized
+    // curves nearly overlap, so the two lines need strong, unrelated hues to stay
+    // visually distinct where they coincide — blue/orange is a standard, high-
+    // contrast, colorblind-safe pairing.
+    var admissionsColor: Color = .blue
     var grossColor: Color = .orange
 
     private let axisHeight: CGFloat = 22

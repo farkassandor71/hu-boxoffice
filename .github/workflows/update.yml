@@ -3,7 +3,12 @@ name: Update box office data
 on:
   schedule:
     - cron: "0 6 * * *"   # daily 06:00 UTC; the source posts monthly between the 1st-10th
-  workflow_dispatch: {}     # allow manual runs
+  workflow_dispatch:
+    inputs:
+      full:
+        description: "Full rebuild from every archived snapshot (only needed after a parser change)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -27,15 +32,11 @@ jobs:
       - name: Install dependencies
         run: pip install xlrd==2.0.2 certifi
 
-      # Cache downloaded .xls snapshots so only new months are fetched each run.
-      - name: Restore snapshot cache
-        uses: actions/cache@v4
-        with:
-          path: cache
-          key: xls-cache-v1
-
+      # Incremental mode (default) merges only the snapshot(s) not yet reflected
+      # in the checked-out data/films.json, so this run only downloads the new
+      # month's .xls — no persistent cache of the whole archive is needed.
       - name: Build films.json
-        run: python pipeline/build.py
+        run: python pipeline/build.py ${{ inputs.full && '--full' || '' }}
 
       - name: Commit if data changed
         run: |

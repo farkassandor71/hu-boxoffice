@@ -1,20 +1,23 @@
-"""Fold every monthly snapshot into a single films.json for the app.
+"""Merge new monthly snapshots into films.json.
 
-Steps:
-  1. discover snapshots (newest-first) via the WP REST API
-  2. download each into a local cache (skip if already present)
-  3. parse each; within a snapshot, resolve duplicate film rows (keep higher gross)
-  4. match the same film across snapshots by a stable key
-  5. emit current totals + a compact history (points only when admissions or gross changed)
+Default (incremental) mode: load the existing data/films.json, work out which
+archived snapshots aren't reflected in it yet (tracked via "processed_snapshots"),
+and fold in only those — typically just the newest one file per run. A film's
+last history point already encodes everything needed to detect whether the next
+snapshot changed it, so no historical .xls files need to be re-read.
+
+--full mode: ignore any existing films.json and rebuild from every archived
+snapshot. Only needed for the initial backfill, or after a parser fix that should
+be applied retroactively to history already baked into films.json.
 
 Output: data/films.json  and  data/conflicts.log
 """
 from __future__ import annotations
 
+import argparse
 import datetime as dt
 import json
 import os
-import sys
 import unicodedata
 
 from discover import list_snapshots
@@ -25,6 +28,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 CACHE = os.path.join(ROOT, "cache")
 DATA = os.path.join(ROOT, "data")
+FILMS_JSON = os.path.join(DATA, "films.json")
+
+_MERGE_FIELDS = (
+    "key", "title", "ov_title", "distributor", "release", "gross", "admissions", "history",
+)
 
 
 def normalize(s: str) -> str:
@@ -46,7 +54,7 @@ def film_key(rec: dict) -> str:
     return f"{normalize(rec['title'])}|{ym}"
 
 
-def dedupe_snapshot(recs: list[dict], log) -> dict[str, dict]:
+def dedupe_snapshot(recs: list[dict], log: list[str]) -> dict[str, dict]:
     """Collapse rows sharing a film_key within one snapshot, keeping higher gross."""
     by_key: dict[str, dict] = {}
     for rec in recs:
@@ -76,51 +84,88 @@ def download(snap: dict) -> str:
     return path
 
 
-def build(limit: int | None = None) -> dict:
-    snaps = list_snapshots()
-    snaps.sort(key=lambda s: s["date"])  # oldest-first for chronological history
-    if limit:
-        snaps = snaps[-limit:]
+def merge_snapshot(films: dict[str, dict], date: str, deduped: dict[str, dict]) -> None:
+    """Fold one already-deduped snapshot into the running `films` dict, in place."""
+    for key, rec in deduped.items():
+        f = films.get(key)
+        if f is None:
+            f = films[key] = {
+                "key": key,
+                "title": rec["title"],
+                "ov_title": rec["ov_title"],
+                "distributor": rec["distributor"],
+                "release": rec["release"],
+                "gross": rec["gross"],
+                "admissions": rec["admissions"],
+                "history": [],  # [[date, admissions, gross], ...] only when changed
+                "_last_adm": None,
+                "_last_gross": None,
+            }
+        # latest snapshot processed always wins for the current-value fields
+        f["title"] = rec["title"]
+        f["ov_title"] = rec["ov_title"] or f["ov_title"]
+        f["distributor"] = rec["distributor"] or f["distributor"]
+        f["release"] = rec["release"] or f["release"]
+        f["gross"] = rec["gross"]
+        f["admissions"] = rec["admissions"]
+        adm, gross = rec["admissions"], rec["gross"]
+        if (adm is not None or gross is not None) and (
+            adm != f["_last_adm"] or gross != f["_last_gross"]
+        ):
+            f["history"].append([date, adm, gross])
+            f["_last_adm"] = adm
+            f["_last_gross"] = gross
 
-    log: list[str] = []
-    # film_key -> aggregated record
+
+def _load_existing() -> tuple[dict[str, dict], list[str]]:
+    """Load films.json (if present) into the internal merge representation.
+
+    A film's "_last_{adm,gross}" tracking fields are reconstructed from its last
+    history point — the compact history already carries everything needed to
+    resume merging without re-reading any historical .xls files.
+
+    A file predating "processed_snapshots" (schema migration) is deliberately
+    NOT reused here: its history may already reflect any number of snapshots
+    that we can no longer identify, so resuming with an empty `processed` list
+    would re-merge already-applied snapshots on top of themselves and duplicate
+    every history point. Safer to report no existing state, which makes the
+    caller do an effective full rebuild.
+    """
+    if not os.path.exists(FILMS_JSON):
+        return {}, []
+    with open(FILMS_JSON, encoding="utf-8") as fh:
+        payload = json.load(fh)
+    if "processed_snapshots" not in payload:
+        return {}, []
     films: dict[str, dict] = {}
+    for f in payload["films"]:
+        history = f["history"]
+        films[f["key"]] = {
+            **{k: f[k] for k in _MERGE_FIELDS},
+            "_last_adm": history[-1][1] if history else None,
+            "_last_gross": history[-1][2] if history else None,
+        }
+    return films, payload.get("processed_snapshots", [])
 
-    for snap in snaps:
-        date = snap["date"]
-        path = download(snap)
-        deduped = dedupe_snapshot(parse_xls(path), log)
-        for key, rec in deduped.items():
-            f = films.get(key)
-            if f is None:
-                f = films[key] = {
-                    "key": key,
-                    "title": rec["title"],
-                    "ov_title": rec["ov_title"],
-                    "distributor": rec["distributor"],
-                    "release": rec["release"],
-                    "gross": rec["gross"],
-                    "admissions": rec["admissions"],
-                    "history": [],  # [[date, admissions, gross], ...] only when changed
-                    "_last_adm": None,
-                    "_last_gross": None,
-                }
-            # latest snapshot always wins for the current-value fields
-            f["title"] = rec["title"]
-            f["ov_title"] = rec["ov_title"] or f["ov_title"]
-            f["distributor"] = rec["distributor"] or f["distributor"]
-            f["release"] = rec["release"] or f["release"]
-            f["gross"] = rec["gross"]
-            f["admissions"] = rec["admissions"]
-            adm = rec["admissions"]
-            gross = rec["gross"]
-            if (adm is not None or gross is not None) and (
-                adm != f["_last_adm"] or gross != f["_last_gross"]
-            ):
-                f["history"].append([date, adm, gross])
-                f["_last_adm"] = adm
-                f["_last_gross"] = gross
 
+def _check_history_invariant(films: dict[str, dict]) -> None:
+    """Every film's history must have strictly increasing, non-repeating dates.
+
+    A violation means a snapshot got merged twice (e.g. a stale/missing
+    "processed_snapshots" causing re-merge on top of already-baked-in history) —
+    fail loudly rather than silently ship duplicated history points.
+    """
+    for key, f in films.items():
+        dates = [p[0] for p in f["history"]]
+        if dates != sorted(set(dates)):
+            raise AssertionError(
+                f"history invariant violated for {key!r}: dates not strictly "
+                f"increasing / contain duplicates: {dates}"
+            )
+
+
+def _finalize(films: dict[str, dict], processed: list[str]) -> dict:
+    _check_history_invariant(films)
     out_films = []
     for f in films.values():
         f.pop("_last_adm", None)
@@ -135,18 +180,48 @@ def build(limit: int | None = None) -> dict:
         {f["distributor"] for f in out_films if f["distributor"]}, key=normalize
     )
 
-    payload = {
+    return {
         "generated": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
         "source": "filmforgalmazok.hu",
-        "snapshot_count": len(snaps),
-        "latest_snapshot": snaps[-1]["date"] if snaps else None,
+        "snapshot_count": len(processed),
+        "latest_snapshot": processed[-1] if processed else None,
         "film_count": len(out_films),
         "distributors": distributors,
+        "processed_snapshots": processed,
         "films": out_films,
     }
 
+
+def build(full: bool = False, limit: int | None = None) -> dict:
+    all_snaps = list_snapshots()
+    all_snaps.sort(key=lambda s: s["date"])  # oldest-first for chronological history
+
+    if full:
+        films: dict[str, dict] = {}
+        processed: list[str] = []
+        todo = all_snaps
+    else:
+        films, processed = _load_existing()
+        already_done = set(processed)
+        todo = [s for s in all_snaps if s["date"] not in already_done]
+
+    if limit:
+        todo = todo[-limit:]
+
+    log: list[str] = []
+    for snap in todo:
+        path = download(snap)
+        deduped = dedupe_snapshot(parse_xls(path), log)
+        merge_snapshot(films, snap["date"], deduped)
+        processed.append(snap["date"])
+    processed.sort()
+
+    print(f"merged {len(todo)} new snapshot(s)" if not full else f"rebuilt from {len(todo)} snapshot(s)")
+
+    payload = _finalize(films, processed)
+
     os.makedirs(DATA, exist_ok=True)
-    with open(os.path.join(DATA, "films.json"), "w", encoding="utf-8") as f:
+    with open(FILMS_JSON, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))
     with open(os.path.join(DATA, "conflicts.log"), "w", encoding="utf-8") as f:
         f.write("\n".join(log))
@@ -155,9 +230,19 @@ def build(limit: int | None = None) -> dict:
 
 
 if __name__ == "__main__":
-    lim = int(sys.argv[1]) if len(sys.argv) > 1 else None
-    p = build(lim)
+    ap = argparse.ArgumentParser()
+    ap.add_argument(
+        "--full", action="store_true",
+        help="rebuild from every archived snapshot instead of merging incrementally",
+    )
+    ap.add_argument(
+        "--limit", type=int, default=None,
+        help="only process the N most recent not-yet-processed snapshots (or, "
+             "with --full, the N most recent snapshots overall)",
+    )
+    args = ap.parse_args()
+    p = build(full=args.full, limit=args.limit)
     print(
-        f"films={p['film_count']} snapshots={p['snapshot_count']} "
+        f"films={p['film_count']} snapshots_total={p['snapshot_count']} "
         f"latest={p['latest_snapshot']}"
     )

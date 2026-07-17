@@ -31,18 +31,30 @@ all work offline. The pipeline turns 95 monthly snapshots (back to Feb 2018) int
 |------|------|
 | `discover.py` | Enumerate snapshots via the site's open WordPress REST API. De-dupes re-uploaded months. |
 | `parse.py` | Read one `.xls` with `xlrd`. Locates columns by their Hungarian header text rather than fixed position — the layout has changed twice across the archive (a leading ID column was added, then a second header row) and position-based parsing silently misreads ~24% of the older files. Tolerant of the source's other real quirks: text/impossible/overflowing dates → null, a distributor cell that's actually a corrupted date/serial → null. Print count (kópiaszám) is dropped — not reliable in the source. |
-| `build.py` | Fold all snapshots into `films.json`. Resolves duplicate rows (keeps higher gross, logs to `conflicts.log`), assigns a stable per-film key (`normalized title + release month`), and records a history point whenever admissions or gross changed. |
+| `build.py` | Merges new snapshots into `films.json`. Resolves duplicate rows (keeps higher gross, logs to `conflicts.log`), assigns a stable per-film key (`normalized title + release month`), and records a history point whenever admissions or gross changed. |
 | `http_util.py` | HTTPS with `certifi` (needed on python.org macOS builds). |
+
+**Incremental by default.** `build.py` tracks which snapshots are already folded into
+`films.json` (`processed_snapshots`) and, each run, downloads and merges only the ones
+that aren't — in practice just the newest month, since a film's last history point
+already encodes everything needed to detect whether the next snapshot changed it. No
+historical `.xls` files need to be re-read after the initial backfill. Verified by
+comparing an incremental merge against a from-scratch rebuild — byte-identical output.
 
 Run locally:
 
 ```bash
 pip install -r pipeline/requirements.txt
-python pipeline/build.py          # full backfill → data/films.json
-python pipeline/build.py 3        # only the 3 latest snapshots (fast, for testing)
+python pipeline/build.py                  # merge only new snapshots (the normal case)
+python pipeline/build.py --full           # rebuild from every archived snapshot —
+                                           # needed after a parser fix, or if films.json
+                                           # predates the "processed_snapshots" field
+python pipeline/build.py --full --limit 3 # full rebuild, but only the 3 latest snapshots
+                                           # (fast, for testing)
 ```
 
-Downloaded `.xls` files are cached in `cache/` (git-ignored) so re-runs only fetch new months.
+Downloaded `.xls` files are cached in `cache/` (git-ignored); `--full` reuses whatever's
+already there and only fetches what's missing.
 
 ### Why these choices
 
@@ -57,6 +69,11 @@ Downloaded `.xls` files are cached in `cache/` (git-ignored) so re-runs only fet
   point, only films still in cinemas carry a real curve.
 - **Titles are not unique** (116 repeat, e.g. `MICHAEL` ×3). The app disambiguates by
   original title, year, and distributor.
+- **Incremental merge, not incremental download-only.** A tempting simpler design is
+  "just re-download and re-parse everything, but only actually fetch the new file" —
+  that avoids bandwidth waste but not compute, and doesn't solve the real risk: silently
+  resuming from a `films.json` whose provenance you don't know. The fix here is
+  `processed_snapshots` as an explicit ledger, checked before any merge.
 
 ## App (`ios/`)
 

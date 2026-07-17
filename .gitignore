@@ -1,0 +1,12 @@
+# downloaded .xls snapshots — regenerated on demand, not versioned
+cache/
+# Python
+__pycache__/
+*.pyc
+.venv/
+# macOS / Xcode
+.DS_Store
+ios/build/
+ios/DerivedData/
+*.xcuserstate
+xcuserdata/

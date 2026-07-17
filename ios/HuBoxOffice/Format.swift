@@ -68,4 +68,17 @@ enum Format {
         else { return iso }
         return "\(year) \(hungarianMonths[month - 1].prefix(3))."
     }
+
+    private static let isoFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.calendar = Calendar(identifier: .gregorian)
+        f.timeZone = TimeZone(identifier: "UTC")
+        f.dateFormat = "yyyy-MM-dd"
+        return f
+    }()
+
+    /// Parses a "YYYY-MM-DD" string, for date-arithmetic call sites.
+    static func isoDate(_ iso: String) -> Date? {
+        isoFormatter.date(from: String(iso.prefix(10)))
+    }
 }

@@ -3,6 +3,13 @@ import SwiftUI
 /// Two-series line chart for a film's history: admissions and gross, each on its
 /// own independent scale (they differ by orders of magnitude) so both curves stay
 /// readable, with month/year labels under the data points.
+///
+/// With exactly two history points, independently normalizing each series to its
+/// own min/max produces a straight line from (0, bottom) to (1, top) for *any*
+/// monotonically increasing series — the two lines are then pixel-identical, not
+/// just visually close, since normalization erases the actual magnitude of change.
+/// Color alone can't disambiguate a perfect overlap, so the gross line is also
+/// dashed: the gaps let the solid admissions line show through underneath.
 struct DualLineChart: View {
     let points: [HistoryPoint]
     // Deliberately not tied to the app's accent color: admissions and gross track
@@ -31,9 +38,11 @@ struct DualLineChart: View {
 
                     ZStack(alignment: .topLeading) {
                         line(admValues, lo: aLo, span: max(aHi - aLo, 1), stepX: stepX, height: chartHeight)
-                            .stroke(admissionsColor, style: .init(lineWidth: 2, lineJoin: .round))
+                            .stroke(admissionsColor, style: .init(lineWidth: 2.5, lineJoin: .round))
                         line(grossValues, lo: gLo, span: max(gHi - gLo, 1), stepX: stepX, height: chartHeight)
-                            .stroke(grossColor, style: .init(lineWidth: 2, lineJoin: .round))
+                            .stroke(grossColor, style: .init(
+                                lineWidth: 2.5, lineCap: .round, lineJoin: .round, dash: [7, 5]
+                            ))
 
                         ForEach(labelIndices(count: points.count), id: \.self) { i in
                             Text(Format.monthYearShort(points[i].date))
@@ -83,16 +92,24 @@ struct DualLineChart: View {
 
     private var legend: some View {
         HStack(spacing: 16) {
-            legendItem(admissionsColor, "Nézőszám")
-            legendItem(grossColor, "Bevétel")
+            legendItem(admissionsColor, "Nézőszám", dashed: false)
+            legendItem(grossColor, "Bevétel", dashed: true)
         }
         .font(.caption2)
         .foregroundStyle(.secondary)
     }
 
-    private func legendItem(_ color: Color, _ label: String) -> some View {
+    /// The gross swatch is dashed to match its line style, so the legend itself
+    /// signals "these can overlap — look for the dashes" rather than relying on
+    /// color alone.
+    private func legendItem(_ color: Color, _ label: String, dashed: Bool) -> some View {
         HStack(spacing: 4) {
-            RoundedRectangle(cornerRadius: 1.5).fill(color).frame(width: 14, height: 3)
+            Path { p in
+                p.move(to: CGPoint(x: 0, y: 1.5))
+                p.addLine(to: CGPoint(x: 14, y: 1.5))
+            }
+            .stroke(color, style: .init(lineWidth: 3, lineCap: .round, dash: dashed ? [4, 3] : []))
+            .frame(width: 14, height: 3)
             Text(label)
         }
     }

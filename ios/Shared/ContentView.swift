@@ -6,6 +6,11 @@ struct ContentView: View {
     @State private var sort = SortState.default
     @State private var filter = FilterState()
     @State private var showingFilters = false
+    #if os(macOS)
+    // Two-pane on Mac: selecting a row shows its detail in the trailing column
+    // instead of pushing, so there's no back-and-forth to browse several films.
+    @State private var selection: String?
+    #endif
 
     private var results: [Film] {
         let searched = Search.filter(store.films, query: query)
@@ -21,58 +26,86 @@ struct ContentView: View {
     }
 
     var body: some View {
+        #if os(macOS)
+        NavigationSplitView {
+            list
+                .navigationSplitViewColumnWidth(min: 280, ideal: 320, max: 420)
+        } detail: {
+            if let selection, let film = store.films.first(where: { $0.id == selection }) {
+                FilmDetailView(film: film)
+            } else {
+                ContentUnavailableView("Válassz egy filmet a listából", systemImage: "film")
+            }
+        }
+        #else
         NavigationStack {
+            list
+                .navigationDestination(for: String.self) { id in
+                    if let film = store.films.first(where: { $0.id == id }) {
+                        FilmDetailView(film: film)
+                    }
+                }
+        }
+        #endif
+    }
+
+    /// The film list itself, plus every modifier that's identical regardless of
+    /// which container (NavigationStack vs. NavigationSplitView) wraps it.
+    private var list: some View {
+        Group {
+            #if os(macOS)
+            List(results, selection: $selection) { film in
+                FilmRow(film: film).tag(film.id)
+            }
+            .listStyle(.sidebar)
+            #else
             List(results) { film in
                 NavigationLink(value: film.id) {
                     FilmRow(film: film)
                 }
             }
-            .navigationDestination(for: String.self) { id in
-                if let film = store.films.first(where: { $0.id == id }) {
-                    FilmDetailView(film: film)
-                }
-            }
             .listStyle(.plain)
-            .navigationTitle(navigationTitle)
-            .searchable(text: $query, prompt: "Cím keresése")
-            .autocorrectionDisabled()
-            #if os(iOS)
-            .textInputAutocapitalization(.never)
             #endif
-            .overlay {
-                if store.films.isEmpty {
-                    ContentUnavailableView("Adatok betöltése…", systemImage: "film")
-                } else if results.isEmpty {
-                    ContentUnavailableView.search(text: query)
-                }
+        }
+        .navigationTitle(navigationTitle)
+        .searchable(text: $query, prompt: "Cím keresése")
+        .autocorrectionDisabled()
+        #if os(iOS)
+        .textInputAutocapitalization(.never)
+        #endif
+        .overlay {
+            if store.films.isEmpty {
+                ContentUnavailableView("Adatok betöltése…", systemImage: "film")
+            } else if results.isEmpty {
+                ContentUnavailableView.search(text: query)
             }
-            .refreshable { await store.refresh() }
-            .toolbar {
-                #if os(iOS)
-                ToolbarItem(placement: .topBarTrailing) {
-                    sortMenu
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    filterButton
-                }
-                ToolbarItem(placement: .bottomBar) {
-                    filmCountLabel
-                }
-                #else
-                ToolbarItem(placement: .automatic) {
-                    sortMenu
-                }
-                ToolbarItem(placement: .automatic) {
-                    filterButton
-                }
-                ToolbarItem(placement: .status) {
-                    filmCountLabel
-                }
-                #endif
+        }
+        .refreshable { await store.refresh() }
+        .toolbar {
+            #if os(iOS)
+            ToolbarItem(placement: .topBarTrailing) {
+                sortMenu
             }
-            .sheet(isPresented: $showingFilters) {
-                FilterView(filter: $filter, distributors: store.distributors, yearRange: store.releaseYearRange)
+            ToolbarItem(placement: .topBarTrailing) {
+                filterButton
             }
+            ToolbarItem(placement: .bottomBar) {
+                filmCountLabel
+            }
+            #else
+            ToolbarItem(placement: .automatic) {
+                sortMenu
+            }
+            ToolbarItem(placement: .automatic) {
+                filterButton
+            }
+            ToolbarItem(placement: .status) {
+                filmCountLabel
+            }
+            #endif
+        }
+        .sheet(isPresented: $showingFilters) {
+            FilterView(filter: $filter, distributors: store.distributors, yearRange: store.releaseYearRange)
         }
     }
 

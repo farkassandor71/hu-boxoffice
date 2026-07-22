@@ -12,7 +12,7 @@ struct BoxOfficeHUMacApp: App {
                     store.load()
                     await store.refresh()
                 }
-                .frame(minWidth: 480, minHeight: 600)
+                .frame(minWidth: 760, idealWidth: 900, minHeight: 600, idealHeight: 720)
         }
     }
 }

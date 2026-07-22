@@ -47,12 +47,7 @@ struct FilterView: View {
                     NavigationLink {
                         DistributorPickerView(distributors: distributors, selection: $filter.distributor)
                     } label: {
-                        HStack {
-                            Text("Forgalmazó")
-                            Spacer()
-                            Text(filter.distributor ?? "Bármelyik")
-                                .foregroundStyle(.secondary)
-                        }
+                        LabeledContent("Forgalmazó", value: filter.distributor ?? "Bármelyik")
                     }
                 }
 
@@ -65,21 +60,29 @@ struct FilterView: View {
                 }
             }
             .navigationTitle("Szűrők")
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Kész") { dismiss() }
                 }
             }
         }
+        #if os(macOS)
+        // A sheet's size on macOS is fixed to the NavigationStack's root view at
+        // presentation time; without an explicit size it won't grow to fit the
+        // pushed DistributorPickerView's list.
+        .frame(width: 420, height: 520)
+        #endif
     }
 
     private func numberField(_ label: String, value: Binding<Int?>) -> some View {
-        HStack {
-            Text(label)
-            Spacer()
+        LabeledContent(label) {
             TextField("—", text: intProxy(value))
+                #if os(iOS)
                 .keyboardType(.numberPad)
+                #endif
                 .multilineTextAlignment(.trailing)
                 .frame(width: 120)
         }
@@ -132,6 +135,8 @@ private struct DistributorPickerView: View {
         .foregroundStyle(.primary)
         .searchable(text: $query, prompt: "Forgalmazó keresése")
         .navigationTitle("Forgalmazó")
+        #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
+        #endif
     }
 }

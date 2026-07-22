@@ -30,8 +30,12 @@ struct FilmDetailView: View {
             // simply too new to chart yet -- no section shown, same as before.
         }
         .navigationTitle(film.title)
+        #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         .listStyle(.insetGrouped)
+        #else
+        .listStyle(.inset)
+        #endif
     }
 
     /// For a film with exactly one history point far removed from its release

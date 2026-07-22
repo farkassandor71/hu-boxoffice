@@ -36,7 +36,9 @@ struct ContentView: View {
             .navigationTitle(navigationTitle)
             .searchable(text: $query, prompt: "Cím keresése")
             .autocorrectionDisabled()
+            #if os(iOS)
             .textInputAutocapitalization(.never)
+            #endif
             .overlay {
                 if store.films.isEmpty {
                     ContentUnavailableView("Adatok betöltése…", systemImage: "film")
@@ -46,25 +48,27 @@ struct ContentView: View {
             }
             .refreshable { await store.refresh() }
             .toolbar {
+                #if os(iOS)
                 ToolbarItem(placement: .topBarTrailing) {
                     sortMenu
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        showingFilters = true
-                    } label: {
-                        Image(systemName: filter.isActive
-                            ? "line.3.horizontal.decrease.circle.fill"
-                            : "line.3.horizontal.decrease.circle")
-                    }
+                    filterButton
                 }
                 ToolbarItem(placement: .bottomBar) {
-                    Text("\(Format.number(store.films.count)) film")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
+                    filmCountLabel
                 }
+                #else
+                ToolbarItem(placement: .automatic) {
+                    sortMenu
+                }
+                ToolbarItem(placement: .automatic) {
+                    filterButton
+                }
+                ToolbarItem(placement: .status) {
+                    filmCountLabel
+                }
+                #endif
             }
             .sheet(isPresented: $showingFilters) {
                 FilterView(filter: $filter, distributors: store.distributors, yearRange: store.releaseYearRange)
@@ -89,6 +93,24 @@ struct ContentView: View {
         } label: {
             Image(systemName: "arrow.up.arrow.down.circle")
         }
+    }
+
+    private var filterButton: some View {
+        Button {
+            showingFilters = true
+        } label: {
+            Image(systemName: filter.isActive
+                ? "line.3.horizontal.decrease.circle.fill"
+                : "line.3.horizontal.decrease.circle")
+        }
+    }
+
+    private var filmCountLabel: some View {
+        Text("\(Format.number(store.films.count)) film")
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
     }
 }
 
